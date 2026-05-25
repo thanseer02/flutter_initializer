@@ -4,10 +4,12 @@ set -Eeuo pipefail
 # ------------------------------------------------------------------------------
 # CONFIG
 # ------------------------------------------------------------------------------
-TEMPLATE_REPO="git@github.com:YOUR_USERNAME/flutter_mvvm_template.git"
+TEMPLATE_REPO="https://github.com/YOUR_USERNAME/flutter_mvvm_template.git"
 SCRIPT_DIR="$(pwd)"
 
-# Colors
+# ------------------------------------------------------------------------------
+# COLORS
+# ------------------------------------------------------------------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -52,12 +54,12 @@ prompt_project_name() {
     local value
     value=$(read_input "📦 Project Name (snake_case): ")
 
-    [[ "$value" =~ ^[a-z][a-z0-9_]*$ ]] && {
+    if [[ "$value" =~ ^[a-z][a-z0-9_]*$ ]]; then
       PROJECT_NAME="$value"
       break
-    }
+    fi
 
-    log_error "Use lowercase letters, numbers, underscores only"
+    log_error "Use lowercase + underscores only (e.g. my_app)"
   done
 }
 
@@ -70,12 +72,12 @@ prompt_bundle_id() {
     local value
     value=$(read_input "🆔 Bundle ID (com.company.app): ")
 
-    [[ "$value" =~ ^[a-zA-Z][a-zA-Z0-9]*(\.[a-zA-Z0-9]+)+$ ]] && {
+    if [[ "$value" =~ ^[a-zA-Z][a-zA-Z0-9]*(\.[a-zA-Z0-9]+)+$ ]]; then
       BUNDLE_ID="$value"
       break
-    }
+    fi
 
-    log_error "Invalid bundle ID"
+    log_error "Invalid bundle format"
   done
 }
 
@@ -84,12 +86,12 @@ prompt_repo_url() {
     local value
     value=$(read_input "🔗 Git Repo URL: ")
 
-    [[ "$value" =~ ^(git@|https://).+ ]] && {
+    if [[ "$value" =~ ^https://.+ ]]; then
       REPO_URL="$value"
       break
-    }
+    fi
 
-    log_error "Must start with git@ or https://"
+    log_error "Use HTTPS URL (recommended)"
   done
 }
 
@@ -98,10 +100,10 @@ prompt_fvm_version() {
     local value
     value=$(read_input "🧩 Flutter Version (e.g. 3.19.0): ")
 
-    [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] && {
+    if [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
       FVM_VERSION="$value"
       break
-    }
+    fi
 
     log_error "Invalid version"
   done
@@ -123,7 +125,7 @@ trap cleanup EXIT
 # ------------------------------------------------------------------------------
 require_cmd() {
   command -v "$1" &>/dev/null || {
-    log_error "$1 not installed"
+    log_error "$1 is required but not installed"
     exit 1
   }
 }
@@ -134,15 +136,19 @@ check_dependencies() {
 }
 
 # ------------------------------------------------------------------------------
-# FVM / FLUTTER SETUP (NO DART REQUIRED)
+# FVM SETUP
 # ------------------------------------------------------------------------------
 setup_fvm() {
-  log_step "Setting up Flutter (via FVM)"
+  log_step "Setting up Flutter (FVM)"
 
   if ! command -v fvm &>/dev/null; then
-    log_warn "FVM not found. Installing..."
+    log_warn "FVM not found → installing..."
 
-    git clone https://github.com/leoafarias/fvm.git "$HOME/.fvm"
+    git clone https://github.com/leoafarias/fvm.git "$HOME/.fvm" || {
+      log_error "Failed to install FVM"
+      exit 1
+    }
+
     export PATH="$HOME/.fvm/default/bin:$PATH"
   fi
 
@@ -151,6 +157,8 @@ setup_fvm() {
   log_info "Installing Flutter $FVM_VERSION..."
   fvm install "$FVM_VERSION"
   fvm use "$FVM_VERSION" --force
+
+  log_success "Flutter $FVM_VERSION ready"
 }
 
 # ------------------------------------------------------------------------------
@@ -160,7 +168,12 @@ clone_template() {
   WORK_DIR="${SCRIPT_DIR}/temp_${PROJECT_NAME}"
 
   log_step "Cloning template"
-  git clone --depth=1 "$TEMPLATE_REPO" "$WORK_DIR"
+
+  git clone --depth=1 "$TEMPLATE_REPO" "$WORK_DIR" || {
+    log_error "Template repo not found or inaccessible"
+    exit 1
+  }
+
   rm -rf "$WORK_DIR/.git"
 }
 
@@ -177,16 +190,7 @@ rename_project() {
     sed -i '' "s/^name:.*/name: ${PROJECT_NAME}/" pubspec.yaml
   fi
 
-  if command -v dart &>/dev/null; then
-    if ! command -v rename &>/dev/null; then
-      dart pub global activate rename
-    fi
-
-    rename setBundleId --value "$BUNDLE_ID"
-    rename setAppName --value "$APP_NAME"
-  else
-    log_warn "Skipping bundle/app rename (dart not available)"
-  fi
+  log_success "Project renamed"
 }
 
 # ------------------------------------------------------------------------------
@@ -201,7 +205,7 @@ flutter_setup() {
 # GIT PUSH
 # ------------------------------------------------------------------------------
 push_repo() {
-  log_step "Pushing to Git"
+  log_step "Pushing to remote"
 
   git init
   git add .
@@ -209,7 +213,10 @@ push_repo() {
   git branch -M main
   git remote add origin "$REPO_URL"
 
-  git push -u origin main
+  git push -u origin main || {
+    log_error "Push failed. Make sure repo exists and is empty"
+    exit 1
+  }
 }
 
 # ------------------------------------------------------------------------------
@@ -245,7 +252,7 @@ main() {
   push_repo
 
   echo ""
-  log_success "🎉 Done!"
+  log_success "🎉 Project Created Successfully!"
   echo "👉 git clone $REPO_URL"
 }
 
