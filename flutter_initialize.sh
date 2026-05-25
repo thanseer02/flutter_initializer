@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # ------------------------------------------------------------------------------
-# CONSTANTS
+# CONFIG
 # ------------------------------------------------------------------------------
 TEMPLATE_REPO="git@github.com:YOUR_USERNAME/flutter_mvvm_template.git"
 SCRIPT_DIR="$(pwd)"
@@ -25,68 +25,102 @@ log_error()   { echo -e "${RED}❌ $*${RESET}" >&2; }
 log_step()    { echo -e "\n${BOLD}── $* ${RESET}"; }
 
 # ------------------------------------------------------------------------------
+# SAFE INPUT HANDLER (🔥 KEY FIX)
+# ------------------------------------------------------------------------------
+read_input() {
+  local prompt="$1"
+  local input=""
+
+  while true; do
+    if [[ -t 0 ]]; then
+      read -rp "$prompt" input
+    else
+      read -rp "$prompt" input < /dev/tty
+    fi
+
+    # skip empty input (prevents infinite loop)
+    [[ -z "$input" ]] && continue
+
+    echo "$input"
+    return
+  done
+}
+
+# ------------------------------------------------------------------------------
+# PROMPTS
+# ------------------------------------------------------------------------------
+prompt_project_name() {
+  while true; do
+    local value
+    value=$(read_input "📦 Project Name (snake_case): ")
+
+    if [[ "$value" =~ ^[a-z][a-z0-9_]*$ ]]; then
+      PROJECT_NAME="$value"
+      break
+    fi
+
+    log_error "Use lowercase letters, numbers, underscores (no leading number)"
+  done
+}
+
+prompt_app_name() {
+  APP_NAME=$(read_input "📱 App Name: ")
+}
+
+prompt_bundle_id() {
+  while true; do
+    local value
+    value=$(read_input "🆔 Bundle ID (com.company.app): ")
+
+    if [[ "$value" =~ ^[a-zA-Z][a-zA-Z0-9]*(\.[a-zA-Z0-9]+)+$ ]]; then
+      BUNDLE_ID="$value"
+      break
+    fi
+
+    log_error "Invalid bundle ID format"
+  done
+}
+
+prompt_repo_url() {
+  while true; do
+    local value
+    value=$(read_input "🔗 Git Repo URL: ")
+
+    if [[ "$value" =~ ^(git@|https://).+ ]]; then
+      REPO_URL="$value"
+      break
+    fi
+
+    log_error "Must start with git@ or https://"
+  done
+}
+
+prompt_fvm_version() {
+  while true; do
+    local value
+    value=$(read_input "🧩 Flutter Version (e.g. 3.19.0): ")
+
+    if [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+      FVM_VERSION="$value"
+      break
+    fi
+
+    log_error "Invalid version format"
+  done
+}
+
+# ------------------------------------------------------------------------------
 # CLEANUP
 # ------------------------------------------------------------------------------
 WORK_DIR=""
 cleanup() {
   local exit_code=$?
   if [[ -n "$WORK_DIR" && -d "$WORK_DIR" ]]; then
-    log_warn "Cleaning up: $WORK_DIR"
     rm -rf "$WORK_DIR"
   fi
-  if [[ $exit_code -ne 0 ]]; then
-    log_error "Installer failed (exit code: $exit_code)"
-  fi
+  [[ $exit_code -ne 0 ]] && log_error "Installer failed"
 }
 trap cleanup EXIT
-
-# ------------------------------------------------------------------------------
-# PROMPTS (FIXED with /dev/tty)
-# ------------------------------------------------------------------------------
-prompt_project_name() {
-  while true; do
-    read -rp "📦 Project Name (snake_case): " value < /dev/tty
-    [[ "$value" =~ ^[a-z][a-z0-9_]*$ ]] && break
-    log_error "Invalid. Use lowercase + underscores only."
-  done
-  PROJECT_NAME="$value"
-}
-
-prompt_app_name() {
-  while true; do
-    read -rp "📱 App Name: " value < /dev/tty
-    [[ -n "$value" ]] && break
-    log_error "App name cannot be empty."
-  done
-  APP_NAME="$value"
-}
-
-prompt_bundle_id() {
-  while true; do
-    read -rp "🆔 Bundle ID (com.company.app): " value < /dev/tty
-    [[ "$value" =~ ^[a-zA-Z][a-zA-Z0-9]*(\.[a-zA-Z0-9]+)+$ ]] && break
-    log_error "Invalid bundle ID."
-  done
-  BUNDLE_ID="$value"
-}
-
-prompt_repo_url() {
-  while true; do
-    read -rp "🔗 Git Repo URL: " value < /dev/tty
-    [[ "$value" =~ ^(git@|https://).+ ]] && break
-    log_error "Invalid repo URL."
-  done
-  REPO_URL="$value"
-}
-
-prompt_fvm_version() {
-  while true; do
-    read -rp "🧩 Flutter Version (e.g. 3.19.0): " value < /dev/tty
-    [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] && break
-    log_error "Invalid version."
-  done
-  FVM_VERSION="$value"
-}
 
 # ------------------------------------------------------------------------------
 # DEPENDENCIES
@@ -99,7 +133,7 @@ require_cmd() {
 }
 
 check_dependencies() {
-  log_step "🔍 Checking dependencies"
+  log_step "Checking dependencies"
   require_cmd git
   require_cmd dart
 }
@@ -108,7 +142,7 @@ check_dependencies() {
 # FVM
 # ------------------------------------------------------------------------------
 setup_fvm() {
-  log_step "⚙️ Setting up FVM"
+  log_step "Setting up FVM"
 
   if ! command -v fvm &>/dev/null; then
     log_warn "Installing FVM..."
@@ -126,7 +160,7 @@ setup_fvm() {
 clone_template() {
   WORK_DIR="${SCRIPT_DIR}/temp_${PROJECT_NAME}"
 
-  log_step "📥 Cloning template"
+  log_step "Cloning template"
   git clone --depth=1 "$TEMPLATE_REPO" "$WORK_DIR"
   rm -rf "$WORK_DIR/.git"
 }
@@ -135,12 +169,15 @@ clone_template() {
 # RENAME PROJECT
 # ------------------------------------------------------------------------------
 rename_project() {
-  log_step "📦 Renaming project"
-
+  log_step "Renaming project"
   cd "$WORK_DIR"
 
-  sed -i "s/^name:.*/name: ${PROJECT_NAME}/" pubspec.yaml || \
-  sed -i '' "s/^name:.*/name: ${PROJECT_NAME}/" pubspec.yaml
+  # Linux / Mac sed fix
+  if sed --version &>/dev/null 2>&1; then
+    sed -i "s/^name:.*/name: ${PROJECT_NAME}/" pubspec.yaml
+  else
+    sed -i '' "s/^name:.*/name: ${PROJECT_NAME}/" pubspec.yaml
+  fi
 
   if ! command -v rename &>/dev/null; then
     dart pub global activate rename
@@ -154,7 +191,7 @@ rename_project() {
 # FLUTTER SETUP
 # ------------------------------------------------------------------------------
 flutter_setup() {
-  log_step "📦 Installing dependencies"
+  log_step "Running flutter pub get"
   fvm flutter pub get
 }
 
@@ -162,7 +199,7 @@ flutter_setup() {
 # GIT PUSH
 # ------------------------------------------------------------------------------
 push_repo() {
-  log_step "🚀 Pushing to GitHub"
+  log_step "Pushing to Git"
 
   git init
   git add .
@@ -195,7 +232,7 @@ main() {
   echo "Repo: $REPO_URL"
   echo "Flutter: $FVM_VERSION"
 
-  read -rp "Continue? (y/n): " confirm < /dev/tty
+  confirm=$(read_input "Continue? (y/n): ")
   [[ "$confirm" != "y" ]] && exit 0
 
   check_dependencies
