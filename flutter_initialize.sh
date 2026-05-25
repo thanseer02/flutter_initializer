@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Flutter Project Installer
-# Usage: bash install.sh <repo_url> <project_name> <app_name> <bundle_id> <fvm_version>
+# Flutter Project Initializer — Interactive
+# Run: bash install.sh
 # ==============================================================================
 
 set -Eeuo pipefail
@@ -30,31 +30,6 @@ log_error()   { echo -e "${RED}❌ $*${RESET}" >&2; }
 log_step()    { echo -e "\n${BOLD}── $* ${RESET}"; }
 
 # ------------------------------------------------------------------------------
-# USAGE
-# ------------------------------------------------------------------------------
-usage() {
-  cat <<EOF
-
-${BOLD}Flutter Project Installer${RESET}
-$(printf '=%.0s' {1..50})
-
-${BOLD}Usage:${RESET}
-  bash install.sh <repo_url> <project_name> <app_name> <bundle_id> <fvm_version>
-
-${BOLD}Arguments:${RESET}
-  repo_url        Target Git remote URL (SSH or HTTPS)
-  project_name    Dart package name (snake_case, e.g. my_app)
-  app_name        Display name shown on device (e.g. "My App")
-  bundle_id       Reverse-domain bundle ID (e.g. com.company.myapp)
-  fvm_version     Flutter version managed by FVM (e.g. 3.19.0)
-
-${BOLD}Example:${RESET}
-  bash install.sh git@github.com:acme/my_app.git my_app "My App" com.acme.myapp 3.19.0
-
-EOF
-}
-
-# ------------------------------------------------------------------------------
 # CLEANUP (runs on any exit via trap)
 # ------------------------------------------------------------------------------
 WORK_DIR=""
@@ -74,6 +49,7 @@ trap cleanup EXIT
 
 # ------------------------------------------------------------------------------
 # INPUT VALIDATION
+# Returns 1 and prints the error if invalid, so the prompt loop can retry.
 # ------------------------------------------------------------------------------
 validate_inputs() {
   local repo_url="$1"
@@ -84,40 +60,106 @@ validate_inputs() {
 
   local errors=0
 
-  # repo_url: basic SSH or HTTPS pattern
   if [[ ! "$repo_url" =~ ^(git@|https://).+ ]]; then
-    log_error "repo_url must be a valid SSH (git@...) or HTTPS (https://...) URL. Got: '$repo_url'"
+    log_error "Repo URL must start with 'git@' or 'https://'. Got: '$repo_url'"
     ((errors++))
   fi
 
-  # project_name: Dart package name rules (lowercase, underscores, no leading digits)
   if [[ ! "$project_name" =~ ^[a-z][a-z0-9_]*$ ]]; then
-    log_error "project_name must be a valid Dart package name (lowercase, underscores only, no leading digit). Got: '$project_name'"
+    log_error "Project name must be lowercase snake_case with no leading digit. Got: '$project_name'"
     ((errors++))
   fi
 
-  # app_name: non-empty
   if [[ -z "$app_name" ]]; then
-    log_error "app_name cannot be empty."
+    log_error "App name cannot be empty."
     ((errors++))
   fi
 
-  # bundle_id: reverse-domain format
   if [[ ! "$bundle_id" =~ ^[a-zA-Z][a-zA-Z0-9]*(\.[a-zA-Z][a-zA-Z0-9]*){1,}$ ]]; then
-    log_error "bundle_id must follow reverse-domain format (e.g. com.company.app). Got: '$bundle_id'"
+    log_error "Bundle ID must follow reverse-domain format (e.g. com.company.app). Got: '$bundle_id'"
     ((errors++))
   fi
 
-  # fvm_version: semver-like
   if [[ ! "$fvm_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
-    log_error "fvm_version must be a valid semver version (e.g. 3.19.0). Got: '$fvm_version'"
+    log_error "Flutter version must be semver (e.g. 3.19.0). Got: '$fvm_version'"
     ((errors++))
   fi
 
-  if [[ $errors -gt 0 ]]; then
-    usage
-    exit 1
-  fi
+  return $errors
+}
+
+# ------------------------------------------------------------------------------
+# PROMPT HELPERS — each loops until the value passes validation
+# ------------------------------------------------------------------------------
+
+# Generic: prompt until non-empty
+prompt_required() {
+  local prompt_text="$1"
+  local varname="$2"
+  local value=""
+  while [[ -z "$value" ]]; do
+    read -rp "$prompt_text" value
+    if [[ -z "$value" ]]; then
+      log_error "This field cannot be empty. Please try again."
+    fi
+  done
+  printf -v "$varname" '%s' "$value"
+}
+
+# Project name: snake_case Dart package name
+prompt_project_name() {
+  local varname="$1"
+  local value=""
+  while true; do
+    read -rp "📦 Project Name (snake_case, e.g. my_app): " value
+    if [[ "$value" =~ ^[a-z][a-z0-9_]*$ ]]; then
+      break
+    fi
+    log_error "Must be lowercase letters, digits, and underscores only (no leading digit)."
+  done
+  printf -v "$varname" '%s' "$value"
+}
+
+# Bundle ID: reverse-domain
+prompt_bundle_id() {
+  local varname="$1"
+  local value=""
+  while true; do
+    read -rp "🆔 Bundle ID (e.g. com.company.myapp): " value
+    if [[ "$value" =~ ^[a-zA-Z][a-zA-Z0-9]*(\.[a-zA-Z][a-zA-Z0-9]*){1,}$ ]]; then
+      break
+    fi
+    log_error "Must follow reverse-domain format, e.g. com.acme.myapp."
+  done
+  printf -v "$varname" '%s' "$value"
+}
+
+# Repo URL: SSH or HTTPS
+prompt_repo_url() {
+  local varname="$1"
+  local value=""
+  while true; do
+    read -rp "🔗 Git Repo URL (SSH or HTTPS): " value
+    if [[ "$value" =~ ^(git@|https://).+ ]]; then
+      break
+    fi
+    log_error "Must start with 'git@' (SSH) or 'https://' (HTTPS)."
+  done
+  printf -v "$varname" '%s' "$value"
+}
+
+# Flutter version: semver
+prompt_fvm_version() {
+  local varname="$1"
+  local value=""
+  while true; do
+    read -rp "🧩 Flutter Version via FVM (e.g. 3.19.0): " value
+    if [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+      break
+    fi
+    log_error "Must be a valid semver version, e.g. 3.19.0 or 3.19.0-beta."
+  done
+  printf -v "$varname" '%s' "$value"
 }
 
 # ------------------------------------------------------------------------------
@@ -155,7 +197,7 @@ setup_fvm() {
 
   # Ensure pub-cache bin is on PATH for this session
   local pub_cache_bin
-  pub_cache_bin="$(dart pub global run --help 2>/dev/null; dart pub cache path 2>/dev/null || echo "$HOME/.pub-cache")/bin"
+  pub_cache_bin="$(dart pub cache path 2>/dev/null || echo "$HOME/.pub-cache")/bin"
   export PATH="$PATH:$pub_cache_bin"
 
   if ! command -v fvm &>/dev/null; then
@@ -183,8 +225,6 @@ clone_template() {
   fi
 
   git clone --depth=1 "$TEMPLATE_REPO" "$work_dir"
-
-  # Scrub template git history entirely
   rm -rf "$work_dir/.git"
 
   log_success "Template cloned to '$work_dir'."
@@ -200,24 +240,19 @@ rename_project() {
 
   log_step "Renaming project"
 
-  # ── pubspec.yaml ──
   if [[ ! -f "pubspec.yaml" ]]; then
     log_error "pubspec.yaml not found in template root. Check TEMPLATE_REPO."
     exit 1
   fi
 
-  # Detect host OS for sed -i compatibility (macOS requires a backup suffix)
+  # Detect host OS for sed -i compatibility (macOS needs an empty backup suffix)
   if sed --version &>/dev/null 2>&1; then
-    # GNU sed
-    sed -i "s/^name:.*/name: ${project_name}/" pubspec.yaml
+    sed -i "s/^name:.*/name: ${project_name}/" pubspec.yaml       # GNU sed
   else
-    # BSD sed (macOS)
-    sed -i '' "s/^name:.*/name: ${project_name}/" pubspec.yaml
+    sed -i '' "s/^name:.*/name: ${project_name}/" pubspec.yaml    # BSD sed (macOS)
   fi
-
   log_info "pubspec.yaml name → $project_name"
 
-  # ── rename package (bundle ID + app name) ──
   if ! command -v rename &>/dev/null; then
     log_warn "'rename' Dart tool not found. Installing..."
     dart pub global activate rename
@@ -256,7 +291,7 @@ init_and_push() {
 
   log_info "Pushing to $repo_url ..."
   if ! git push -u origin main; then
-    log_error "Push failed. Ensure the remote repository exists, is empty, and you have write access."
+    log_error "Push failed. Ensure the remote repo exists, is empty, and you have write access."
     exit 1
   fi
 
@@ -267,30 +302,45 @@ init_and_push() {
 # MAIN
 # ------------------------------------------------------------------------------
 main() {
+  clear
   echo ""
-  echo -e "${BOLD}🚀 Flutter Project Installer${RESET}"
+  echo -e "${BOLD}🚀 Flutter Project Initializer${RESET}"
   printf '=%.0s' {1..50}; echo ""
 
-  # ── Parse arguments ──
-  if [[ $# -lt 5 ]]; then
-    log_error "Not enough arguments supplied."
-    usage
-    exit 1
+  # ── INTERACTIVE INPUT (each prompt validates inline and re-asks on error) ──
+  echo ""
+  echo -e "${CYAN}Please fill in your project details:${RESET}"
+  echo ""
+
+  local project_name app_name bundle_id repo_url fvm_version confirm
+
+  prompt_project_name project_name
+  prompt_required     "📱 App Display Name: "       app_name
+  prompt_bundle_id    bundle_id
+  prompt_repo_url     repo_url
+  prompt_fvm_version  fvm_version
+
+  # ── CONFIRMATION ──
+  echo ""
+  echo -e "${YELLOW}Please confirm your details:${RESET}"
+  printf '%.0s─' {1..40}; echo ""
+  echo -e "  ${BOLD}Project Name :${RESET} $project_name"
+  echo -e "  ${BOLD}App Name     :${RESET} $app_name"
+  echo -e "  ${BOLD}Bundle ID    :${RESET} $bundle_id"
+  echo -e "  ${BOLD}Repo URL     :${RESET} $repo_url"
+  echo -e "  ${BOLD}Flutter Ver  :${RESET} $fvm_version"
+  printf '%.0s─' {1..40}; echo ""
+  echo ""
+  read -rp "▶ Continue? (y/n): " confirm
+  if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+    log_warn "Cancelled by user."
+    exit 0
   fi
 
-  local repo_url="$1"
-  local project_name="$2"
-  local app_name="$3"
-  local bundle_id="$4"
-  local fvm_version="$5"
-
-  # ── Validate ──
-  validate_inputs "$repo_url" "$project_name" "$app_name" "$bundle_id" "$fvm_version"
-
-  # ── Work directory (set before clone so cleanup trap can find it) ──
+  # ── SET WORK DIR (before clone so the EXIT trap can clean it up) ──
   WORK_DIR="${SCRIPT_DIR}/temp_project_${project_name}"
 
-  # ── Run steps ──
+  # ── EXECUTION FLOW ──
   check_dependencies
   setup_fvm "$fvm_version"
   clone_template "$WORK_DIR"
@@ -301,19 +351,22 @@ main() {
     init_and_push "$repo_url" "$project_name"
   popd > /dev/null
 
-  # Explicit cleanup (trap will also run but WORK_DIR cleared here first)
+  # Explicit cleanup (EXIT trap is a safety net; clear WORK_DIR so it skips)
   rm -rf "$WORK_DIR"
   WORK_DIR=""
 
-  # ── Summary ──
+  # ── SUCCESS SUMMARY ──
   echo ""
   printf '=%.0s' {1..50}; echo ""
-  log_success "All done!"
-  echo -e "  ${BOLD}Project:${RESET}   $project_name"
-  echo -e "  ${BOLD}App name:${RESET}  $app_name"
-  echo -e "  ${BOLD}Bundle ID:${RESET} $bundle_id"
-  echo -e "  ${BOLD}Flutter:${RESET}   $fvm_version"
-  echo -e "  ${BOLD}Remote:${RESET}    $repo_url"
+  log_success "🎉 Project Created Successfully!"
+  echo ""
+  echo -e "  📁 ${BOLD}Repo:${RESET} ${CYAN}$repo_url${RESET}"
+  echo ""
+  echo -e "  ${BOLD}👉 Next steps:${RESET}"
+  echo "     git clone $repo_url"
+  echo "     cd $project_name"
+  echo "     fvm flutter run"
+  echo ""
   printf '=%.0s' {1..50}; echo ""
   echo ""
 }
