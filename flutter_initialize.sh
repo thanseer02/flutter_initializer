@@ -49,7 +49,6 @@ trap cleanup EXIT
 
 # ------------------------------------------------------------------------------
 # INPUT VALIDATION
-# Returns 1 and prints the error if invalid, so the prompt loop can retry.
 # ------------------------------------------------------------------------------
 validate_inputs() {
   local repo_url="$1"
@@ -62,56 +61,44 @@ validate_inputs() {
 
   if [[ ! "$repo_url" =~ ^(git@|https://).+ ]]; then
     log_error "Repo URL must start with 'git@' or 'https://'. Got: '$repo_url'"
-    ((errors++))
+    errors=$(( errors + 1 ))  # ✅ NOT ((errors++)) — that evaluates to 0 (falsy) and kills the script
   fi
 
   if [[ ! "$project_name" =~ ^[a-z][a-z0-9_]*$ ]]; then
     log_error "Project name must be lowercase snake_case with no leading digit. Got: '$project_name'"
-    ((errors++))
+    errors=$(( errors + 1 ))
   fi
 
   if [[ -z "$app_name" ]]; then
     log_error "App name cannot be empty."
-    ((errors++))
+    errors=$(( errors + 1 ))
   fi
 
   if [[ ! "$bundle_id" =~ ^[a-zA-Z][a-zA-Z0-9]*(\.[a-zA-Z][a-zA-Z0-9]*){1,}$ ]]; then
     log_error "Bundle ID must follow reverse-domain format (e.g. com.company.app). Got: '$bundle_id'"
-    ((errors++))
+    errors=$(( errors + 1 ))
   fi
 
   if [[ ! "$fvm_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
     log_error "Flutter version must be semver (e.g. 3.19.0). Got: '$fvm_version'"
-    ((errors++))
+    errors=$(( errors + 1 ))
   fi
 
   return $errors
 }
 
 # ------------------------------------------------------------------------------
-# PROMPT HELPERS — each loops until the value passes validation
+# PROMPT HELPERS
+# Each loops until input passes its validation rule.
+# Every `read` has `|| true` to prevent set -e from treating a terminal
+# quirk / EOF as a fatal error.
 # ------------------------------------------------------------------------------
 
-# Generic: prompt until non-empty
-prompt_required() {
-  local prompt_text="$1"
-  local varname="$2"
-  local value=""
-  while [[ -z "$value" ]]; do
-    read -rp "$prompt_text" value
-    if [[ -z "$value" ]]; then
-      log_error "This field cannot be empty. Please try again."
-    fi
-  done
-  printf -v "$varname" '%s' "$value"
-}
-
-# Project name: snake_case Dart package name
 prompt_project_name() {
   local varname="$1"
   local value=""
   while true; do
-    read -rp "📦 Project Name (snake_case, e.g. my_app): " value
+    read -rp "📦 Project Name (snake_case, e.g. my_app): " value || true
     if [[ "$value" =~ ^[a-z][a-z0-9_]*$ ]]; then
       break
     fi
@@ -120,12 +107,23 @@ prompt_project_name() {
   printf -v "$varname" '%s' "$value"
 }
 
-# Bundle ID: reverse-domain
+prompt_app_name() {
+  local varname="$1"
+  local value=""
+  while [[ -z "$value" ]]; do
+    read -rp "📱 App Display Name (e.g. My App): " value || true
+    if [[ -z "$value" ]]; then
+      log_error "App name cannot be empty."
+    fi
+  done
+  printf -v "$varname" '%s' "$value"
+}
+
 prompt_bundle_id() {
   local varname="$1"
   local value=""
   while true; do
-    read -rp "🆔 Bundle ID (e.g. com.company.myapp): " value
+    read -rp "🆔 Bundle ID (e.g. com.company.myapp): " value || true
     if [[ "$value" =~ ^[a-zA-Z][a-zA-Z0-9]*(\.[a-zA-Z][a-zA-Z0-9]*){1,}$ ]]; then
       break
     fi
@@ -134,12 +132,11 @@ prompt_bundle_id() {
   printf -v "$varname" '%s' "$value"
 }
 
-# Repo URL: SSH or HTTPS
 prompt_repo_url() {
   local varname="$1"
   local value=""
   while true; do
-    read -rp "🔗 Git Repo URL (SSH or HTTPS): " value
+    read -rp "🔗 Git Repo URL (SSH or HTTPS): " value || true
     if [[ "$value" =~ ^(git@|https://).+ ]]; then
       break
     fi
@@ -148,12 +145,11 @@ prompt_repo_url() {
   printf -v "$varname" '%s' "$value"
 }
 
-# Flutter version: semver
 prompt_fvm_version() {
   local varname="$1"
   local value=""
   while true; do
-    read -rp "🧩 Flutter Version via FVM (e.g. 3.19.0): " value
+    read -rp "🧩 Flutter Version via FVM (e.g. 3.19.0): " value || true
     if [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
       break
     fi
@@ -177,8 +173,8 @@ require_cmd() {
 
 check_dependencies() {
   log_step "Checking system dependencies"
-  require_cmd git   "https://git-scm.com/downloads"
-  require_cmd dart  "Install Flutter SDK: https://docs.flutter.dev/get-started/install"
+  require_cmd git  "https://git-scm.com/downloads"
+  require_cmd dart "Install Flutter SDK: https://docs.flutter.dev/get-started/install"
   log_success "All required system dependencies found."
 }
 
@@ -195,7 +191,6 @@ setup_fvm() {
     dart pub global activate fvm
   fi
 
-  # Ensure pub-cache bin is on PATH for this session
   local pub_cache_bin
   pub_cache_bin="$(dart pub cache path 2>/dev/null || echo "$HOME/.pub-cache")/bin"
   export PATH="$PATH:$pub_cache_bin"
@@ -245,11 +240,10 @@ rename_project() {
     exit 1
   fi
 
-  # Detect host OS for sed -i compatibility (macOS needs an empty backup suffix)
   if sed --version &>/dev/null 2>&1; then
-    sed -i "s/^name:.*/name: ${project_name}/" pubspec.yaml       # GNU sed
+    sed -i "s/^name:.*/name: ${project_name}/" pubspec.yaml        # GNU sed
   else
-    sed -i '' "s/^name:.*/name: ${project_name}/" pubspec.yaml    # BSD sed (macOS)
+    sed -i '' "s/^name:.*/name: ${project_name}/" pubspec.yaml     # BSD sed (macOS)
   fi
   log_info "pubspec.yaml name → $project_name"
 
@@ -307,15 +301,14 @@ main() {
   echo -e "${BOLD}🚀 Flutter Project Initializer${RESET}"
   printf '=%.0s' {1..50}; echo ""
 
-  # ── INTERACTIVE INPUT (each prompt validates inline and re-asks on error) ──
   echo ""
   echo -e "${CYAN}Please fill in your project details:${RESET}"
   echo ""
 
-  local project_name app_name bundle_id repo_url fvm_version confirm
+  local project_name="" app_name="" bundle_id="" repo_url="" fvm_version="" confirm=""
 
   prompt_project_name project_name
-  prompt_required     "📱 App Display Name: "       app_name
+  prompt_app_name     app_name
   prompt_bundle_id    bundle_id
   prompt_repo_url     repo_url
   prompt_fvm_version  fvm_version
@@ -331,13 +324,13 @@ main() {
   echo -e "  ${BOLD}Flutter Ver  :${RESET} $fvm_version"
   printf '%.0s─' {1..40}; echo ""
   echo ""
-  read -rp "▶ Continue? (y/n): " confirm
+  read -rp "▶ Continue? (y/n): " confirm || true
   if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
     log_warn "Cancelled by user."
     exit 0
   fi
 
-  # ── SET WORK DIR (before clone so the EXIT trap can clean it up) ──
+  # ── SET WORK DIR (before clone so EXIT trap can clean it up) ──
   WORK_DIR="${SCRIPT_DIR}/temp_project_${project_name}"
 
   # ── EXECUTION FLOW ──
@@ -351,7 +344,6 @@ main() {
     init_and_push "$repo_url" "$project_name"
   popd > /dev/null
 
-  # Explicit cleanup (EXIT trap is a safety net; clear WORK_DIR so it skips)
   rm -rf "$WORK_DIR"
   WORK_DIR=""
 
