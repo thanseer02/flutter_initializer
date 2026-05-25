@@ -25,7 +25,7 @@ log_error()   { echo -e "${RED}❌ $*${RESET}" >&2; }
 log_step()    { echo -e "\n${BOLD}── $* ${RESET}"; }
 
 # ------------------------------------------------------------------------------
-# SAFE INPUT HANDLER (🔥 KEY FIX)
+# SAFE INPUT
 # ------------------------------------------------------------------------------
 read_input() {
   local prompt="$1"
@@ -38,9 +38,7 @@ read_input() {
       read -rp "$prompt" input < /dev/tty
     fi
 
-    # skip empty input (prevents infinite loop)
     [[ -z "$input" ]] && continue
-
     echo "$input"
     return
   done
@@ -54,12 +52,12 @@ prompt_project_name() {
     local value
     value=$(read_input "📦 Project Name (snake_case): ")
 
-    if [[ "$value" =~ ^[a-z][a-z0-9_]*$ ]]; then
+    [[ "$value" =~ ^[a-z][a-z0-9_]*$ ]] && {
       PROJECT_NAME="$value"
       break
-    fi
+    }
 
-    log_error "Use lowercase letters, numbers, underscores (no leading number)"
+    log_error "Use lowercase letters, numbers, underscores only"
   done
 }
 
@@ -72,12 +70,12 @@ prompt_bundle_id() {
     local value
     value=$(read_input "🆔 Bundle ID (com.company.app): ")
 
-    if [[ "$value" =~ ^[a-zA-Z][a-zA-Z0-9]*(\.[a-zA-Z0-9]+)+$ ]]; then
+    [[ "$value" =~ ^[a-zA-Z][a-zA-Z0-9]*(\.[a-zA-Z0-9]+)+$ ]] && {
       BUNDLE_ID="$value"
       break
-    fi
+    }
 
-    log_error "Invalid bundle ID format"
+    log_error "Invalid bundle ID"
   done
 }
 
@@ -86,10 +84,10 @@ prompt_repo_url() {
     local value
     value=$(read_input "🔗 Git Repo URL: ")
 
-    if [[ "$value" =~ ^(git@|https://).+ ]]; then
+    [[ "$value" =~ ^(git@|https://).+ ]] && {
       REPO_URL="$value"
       break
-    fi
+    }
 
     log_error "Must start with git@ or https://"
   done
@@ -100,12 +98,12 @@ prompt_fvm_version() {
     local value
     value=$(read_input "🧩 Flutter Version (e.g. 3.19.0): ")
 
-    if [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+    [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] && {
       FVM_VERSION="$value"
       break
-    fi
+    }
 
-    log_error "Invalid version format"
+    log_error "Invalid version"
   done
 }
 
@@ -115,9 +113,7 @@ prompt_fvm_version() {
 WORK_DIR=""
 cleanup() {
   local exit_code=$?
-  if [[ -n "$WORK_DIR" && -d "$WORK_DIR" ]]; then
-    rm -rf "$WORK_DIR"
-  fi
+  [[ -n "$WORK_DIR" && -d "$WORK_DIR" ]] && rm -rf "$WORK_DIR"
   [[ $exit_code -ne 0 ]] && log_error "Installer failed"
 }
 trap cleanup EXIT
@@ -135,22 +131,25 @@ require_cmd() {
 check_dependencies() {
   log_step "Checking dependencies"
   require_cmd git
-  require_cmd dart
 }
 
 # ------------------------------------------------------------------------------
-# FVM
+# FVM / FLUTTER SETUP (NO DART REQUIRED)
 # ------------------------------------------------------------------------------
 setup_fvm() {
-  log_step "Setting up FVM"
+  log_step "Setting up Flutter (via FVM)"
 
   if ! command -v fvm &>/dev/null; then
-    log_warn "Installing FVM..."
-    dart pub global activate fvm
-    export PATH="$PATH:$HOME/.pub-cache/bin"
+    log_warn "FVM not found. Installing..."
+
+    git clone https://github.com/leoafarias/fvm.git "$HOME/.fvm"
+    export PATH="$HOME/.fvm/default/bin:$PATH"
   fi
 
-  fvm install "$FVM_VERSION" --skip-pub-get
+  export PATH="$PATH:$HOME/.fvm/default/bin"
+
+  log_info "Installing Flutter $FVM_VERSION..."
+  fvm install "$FVM_VERSION"
   fvm use "$FVM_VERSION" --force
 }
 
@@ -172,19 +171,22 @@ rename_project() {
   log_step "Renaming project"
   cd "$WORK_DIR"
 
-  # Linux / Mac sed fix
   if sed --version &>/dev/null 2>&1; then
     sed -i "s/^name:.*/name: ${PROJECT_NAME}/" pubspec.yaml
   else
     sed -i '' "s/^name:.*/name: ${PROJECT_NAME}/" pubspec.yaml
   fi
 
-  if ! command -v rename &>/dev/null; then
-    dart pub global activate rename
-  fi
+  if command -v dart &>/dev/null; then
+    if ! command -v rename &>/dev/null; then
+      dart pub global activate rename
+    fi
 
-  rename setBundleId --value "$BUNDLE_ID"
-  rename setAppName --value "$APP_NAME"
+    rename setBundleId --value "$BUNDLE_ID"
+    rename setAppName --value "$APP_NAME"
+  else
+    log_warn "Skipping bundle/app rename (dart not available)"
+  fi
 }
 
 # ------------------------------------------------------------------------------
